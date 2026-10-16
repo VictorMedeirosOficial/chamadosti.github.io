@@ -1,0 +1,16 @@
+{
+  "name": "portal-chamados-ti-mysql",
+  "version": "2.0.0",
+  "description": "Servidor Localhost e Rede Interna para Portal de Chamados TI com MySQL",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "mysql2": "^3.9.7"
+  }
+}
+```[cite: 1]
