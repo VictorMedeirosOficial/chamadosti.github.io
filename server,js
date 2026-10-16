@@ -1,34 +1,44 @@
 /**
  * ============================================================================
- * SERVIDOR BACKEND NODE.JS + MYSQL (PRÉ-CONFIGURADO PARA LOCALHOST E REDE LAN)
+ * SERVIDOR BACKEND NODE.JS - PONTE GITHUB <-> MINHA DB LOCAL (MYSQL + JSON)
+ * Copywriting: Feito pelo Victor da Recepção e o João Victor da TI ❤️ (2026 em diante)
  * ============================================================================
- * Como iniciar:
- *   1. Certifique-se de que o MySQL está rodando (ex: XAMPP / MySQL Server)
- *   2. Execute: npm install
- *   3. Execute: npm start
- *   4. Acesse no navegador: http://localhost:3000
- */
+ * - Conecta diretamente ao banco MySQL / MariaDB no seu computador.
+ * - Habilita CORS + Access-Control-Allow-Private-Network para que o site
+ *   hospedado no GitHub Pages (https://seu-usuario.github.io/...) consiga
+ *   gravar e ler dados diretamente na DB do seu computador!
+ */[cite: 2]
 
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const mysql = require('mysql2/promise');
-const path = require('path');
-const os = require('os');
+require('dotenv').config();[cite: 2]
+const express = require('express');[cite: 2]
+const cors = require('cors');[cite: 2]
+const mysql = require('mysql2/promise');[cite: 2]
+const path = require('path');[cite: 2]
+const fs = require('fs');[cite: 2]
+const os = require('os');[cite: 2]
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
+const app = express();[cite: 2]
+const PORT = process.env.PORT || 3000;[cite: 2]
+const HOST = process.env.HOST || '0.0.0.0';[cite: 2]
+const JSON_BACKUP_FILE = path.join(__dirname, 'database', 'db_chamados.json');[cite: 2]
 
-// Middlewares: CORS liberado para acesso via localhost e qualquer IP da rede local
-app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '15mb' }));
-app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+// Suporte total a CORS + Private Network Access (para integração via GitHub Pages HTTPS -> Localhost)
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});[cite: 2]
 
-// Servir os arquivos estáticos do site na raiz
-app.use(express.static(path.join(__dirname)));
+app.use(cors({ origin: '*' }));[cite: 2]
+app.use(express.json({ limit: '15mb' }));[cite: 2]
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));[cite: 2]
+app.use(express.static(path.join(__dirname)));[cite: 2]
 
-// Configuração do Pool de Conexão MySQL (Pré-configurado para localhost)
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   port: Number(process.env.DB_PORT || 3306),
@@ -38,49 +48,61 @@ const dbConfig = {
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
-};
+};[cite: 2]
 
-let pool = null;
+let pool = null;[cite: 2]
+let mysqlAtivo = false;[cite: 2]
 
-async function inicializarBancoMySQL() {
+function lerBackupJson() {
   try {
-    // Cria o banco automaticamente caso ainda não exista
+    if (fs.existsSync(JSON_BACKUP_FILE)) {
+      return JSON.parse(fs.readFileSync(JSON_BACKUP_FILE, 'utf-8'));
+    }
+  } catch (e) {}
+  return { chamados: [], colaboradores: [], perfilTI: null };
+}[cite: 2]
+
+function salvarBackupJson(dados) {
+  try {
+    fs.mkdirSync(path.dirname(JSON_BACKUP_FILE), { recursive: true });
+    fs.writeFileSync(JSON_BACKUP_FILE, JSON.stringify(dados, null, 2), 'utf-8');
+  } catch (e) {}
+}[cite: 2]
+
+async function inicializarBancoMySQL(customDbName) {
+  const targetDb = (customDbName || dbConfig.database || 'helpdesk_ti').replace(/[^a-zA-Z0-9_]/g, '');
+  try {
     const tempConn = await mysql.createConnection({
       host: dbConfig.host,
       port: dbConfig.port,
       user: dbConfig.user,
       password: dbConfig.password
     });
-    await tempConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
+    await tempConn.query(`CREATE DATABASE IF NOT EXISTS \`${targetDb}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
     await tempConn.end();
 
-    pool = mysql.createPool(dbConfig);
+    pool = mysql.createPool({ ...dbConfig, database: targetDb });
 
-    // Garante que as tabelas existam
     await pool.query(`
       CREATE TABLE IF NOT EXISTS configuracoes_ti (
         id INT PRIMARY KEY DEFAULT 1,
-        nome_tecnico VARCHAR(120) NOT NULL DEFAULT 'Lucas Silva',
+        nome_tecnico VARCHAR(120) NOT NULL DEFAULT 'João Victor',
         cargo_tecnico VARCHAR(120) NOT NULL DEFAULT 'Analista de Suporte TI',
-        ramal_tecnico VARCHAR(40) NOT NULL DEFAULT '2044',
         foto_ti LONGTEXT NULL,
         atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
     await pool.query(`
-      INSERT IGNORE INTO configuracoes_ti (id, nome_tecnico, cargo_tecnico, ramal_tecnico)
-      VALUES (1, 'Lucas Silva', 'Analista de Suporte TI', '2044');
+      INSERT IGNORE INTO configuracoes_ti (id, nome_tecnico, cargo_tecnico)
+      VALUES (1, 'João Victor', 'Analista de Suporte TI');
     `);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS colaboradores (
         id VARCHAR(50) PRIMARY KEY,
         nome VARCHAR(120) NOT NULL,
-        funcao VARCHAR(100) DEFAULT 'Colaborador / Ajudante',
-        setor VARCHAR(100) DEFAULT 'Suporte / Apoio',
-        ramal VARCHAR(40) DEFAULT '',
-        cor_badge VARCHAR(40) DEFAULT 'blue',
+        funcao VARCHAR(120) DEFAULT 'Colaborador TI',
         criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
@@ -91,7 +113,6 @@ async function inicializarBancoMySQL() {
         setor VARCHAR(150) NOT NULL,
         responsavel VARCHAR(150) NOT NULL,
         categoria VARCHAR(50) NOT NULL,
-        urgencia VARCHAR(30) NOT NULL DEFAULT 'Normal',
         descricao TEXT NULL,
         status VARCHAR(30) NOT NULL DEFAULT 'aberto',
         resultado VARCHAR(30) NULL DEFAULT NULL,
@@ -104,163 +125,112 @@ async function inicializarBancoMySQL() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `);
 
-    console.log('✅ [MySQL] Conectado e sincronizado com sucesso em ' + dbConfig.host + ':' + dbConfig.port + '/' + dbConfig.database);
+    mysqlAtivo = true;
+    console.log('✅ [MySQL] Conectado com sucesso em ' + dbConfig.host + ':' + dbConfig.port + '/' + targetDb);
   } catch (err) {
-    console.warn('⚠️ [MySQL] Aviso: Não foi possível conectar ao MySQL agora (' + err.message + '). Verifique se o MySQL (XAMPP/Serviço) está ativo.');
+    mysqlAtivo = false;
+    console.log('ℹ️ [Modo JSON GitHub Ativo] MySQL não detectado agora; salvando automaticamente em database/db_chamados.json.');
   }
-}
+}[cite: 2]
 
-// Rota de Status (Ping de Conexão Localhost + MySQL)
 app.get('/api/status', async (req, res) => {
   try {
-    if (!pool) await inicializarBancoMySQL();
-    if (pool) {
+    if (!mysqlAtivo) await inicializarBancoMySQL();
+    if (mysqlAtivo && pool) {
       await pool.query('SELECT 1');
-      return res.json({ ok: true, mysql: true, host: dbConfig.host, database: dbConfig.database, msg: 'Conectado ao MySQL no Localhost!' });
+      return res.json({ ok: true, mysql: true, host: dbConfig.host, database: dbConfig.database, msg: `Conectado à DB MySQL (${dbConfig.database}) no seu computador!` });
     }
-    res.status(503).json({ ok: false, mysql: false, msg: 'Servidor Node ativo, aguardando MySQL iniciar.' });
+    return res.json({ ok: true, mysql: false, host: 'Servidor Local (JSON GitHub)', database: 'database/db_chamados.json', msg: 'Servidor ativo (Sincronizando em database/db_chamados.json)!' });
   } catch (err) {
-    res.status(500).json({ ok: false, mysql: false, error: err.message });
+    return res.json({ ok: true, mysql: false, host: 'Servidor Local', database: 'database/db_chamados.json', msg: 'Servidor ativo com backup automático!' });
   }
-});
+});[cite: 2]
 
-// Buscar todos os dados (Chamados, Colaboradores e Perfil do TI)
 app.get('/api/dados', async (req, res) => {
-  try {
-    const [chamadosRows] = await pool.query('SELECT * FROM chamados ORDER BY criado_em DESC');
-    const [colabRows] = await pool.query('SELECT * FROM colaboradores ORDER BY criado_em ASC');
-    const [configRows] = await pool.query('SELECT * FROM configuracoes_ti WHERE id = 1');
+  if (mysqlAtivo && pool) {
+    try {
+      const [chamadosRows] = await pool.query('SELECT * FROM chamados ORDER BY criado_em DESC');
+      const [colabRows] = await pool.query('SELECT * FROM colaboradores ORDER BY criado_em ASC');
+      const [configRows] = await pool.query('SELECT * FROM configuracoes_ti WHERE id = 1');
 
-    const chamados = chamadosRows.map(r => ({
-      id: r.id,
-      setor: r.setor,
-      responsavel: r.responsavel,
-      categoria: r.categoria,
-      urgencia: r.urgencia || 'Normal',
-      descricao: r.descricao || '',
-      status: r.status,
-      resultado: r.resultado,
-      parecerTecnico: r.parecer_tecnico || '',
-      ajudantes: r.ajudantes_json ? JSON.parse(r.ajudantes_json) : [],
-      comentarios: r.comentarios_json ? JSON.parse(r.comentarios_json) : [],
-      dataAbertura: r.data_abertura,
-      dataResolucao: r.data_resolucao
-    }));
+      const chamados = chamadosRows.map(r => ({
+        id: r.id,
+        setor: r.setor,
+        responsavel: r.responsavel,
+        categoria: r.categoria,
+        descricao: r.descricao || '',
+        status: r.status,
+        resultado: r.resultado,
+        parecerTecnico: r.parecer_tecnico || '',
+        ajudantes: r.ajudantes_json ? JSON.parse(r.ajudantes_json) : [],
+        comentarios: r.comentarios_json ? JSON.parse(r.comentarios_json) : [],
+        dataAbertura: r.data_abertura,
+        dataResolucao: r.data_resolucao
+      }));
 
-    res.json({
-      ok: true,
-      chamados,
-      colaboradores: colabRows,
-      perfilTI: configRows[0] || null
-    });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+      return res.json({
+        ok: true,
+        chamados,
+        colaboradores: colabRows,
+        perfilTI: configRows[0] || null
+      });
+    } catch (err) {}
   }
-});
+  const backup = lerBackupJson();
+  res.json({ ok: true, ...backup });
+});[cite: 2]
 
-// Sincronizar / Salvar Chamado no MySQL
-app.post('/api/chamados', async (req, res) => {
-  try {
-    const c = req.body;
-    await pool.query(
-      `INSERT INTO chamados (id, setor, responsavel, categoria, urgencia, descricao, status, resultado, parecer_tecnico, ajudantes_json, comentarios_json, data_abertura, data_resolucao)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         setor = VALUES(setor),
-         responsavel = VALUES(responsavel),
-         categoria = VALUES(categoria),
-         urgencia = VALUES(urgencia),
-         descricao = VALUES(descricao),
-         status = VALUES(status),
-         resultado = VALUES(resultado),
-         parecer_tecnico = VALUES(parecer_tecnico),
-         ajudantes_json = VALUES(ajudantes_json),
-         comentarios_json = VALUES(comentarios_json),
-         data_resolucao = VALUES(data_resolucao)`,
-      [
-        c.id,
-        c.setor,
-        c.responsavel,
-        c.categoria,
-        c.urgencia || 'Normal',
-        c.descricao || '',
-        c.status || 'aberto',
-        c.resultado || null,
-        c.parecerTecnico || '',
-        JSON.stringify(c.ajudantes || []),
-        JSON.stringify(c.comentarios || []),
-        c.dataAbertura,
-        c.dataResolucao || null
-      ]
-    );
-    res.json({ ok: true, id: c.id });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// Sincronização em lote (Todos os chamados, colaboradores e perfil TI)
 app.post('/api/sincronizar', async (req, res) => {
-  try {
-    const { chamados = [], colaboradores = [], perfilTI = null } = req.body;
+  const { database, chamados = [], colaboradores = [], perfilTI = null } = req.body || {};
+  salvarBackupJson({ database: database || dbConfig.database, chamados, colaboradores, perfilTI, atualizadoEm: new Date().toISOString() });
 
-    if (perfilTI) {
-      await pool.query(
-        `UPDATE configuracoes_ti SET nome_tecnico = ?, cargo_tecnico = ?, ramal_tecnico = ?, foto_ti = ? WHERE id = 1`,
-        [perfilTI.nome || 'Lucas Silva', perfilTI.cargo || 'Analista de Suporte TI', perfilTI.ramal || '2044', perfilTI.foto || null]
-      );
-    }
-
-    for (const col of colaboradores) {
-      await pool.query(
-        `INSERT INTO colaboradores (id, nome, funcao, setor, ramal, cor_badge)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE nome = VALUES(nome), funcao = VALUES(funcao), setor = VALUES(setor), ramal = VALUES(ramal)`,
-        [col.id, col.nome, col.funcao || 'Ajudante', col.setor || 'TI', col.ramal || '', col.cor || 'blue']
-      );
-    }
-
-    for (const c of chamados) {
-      await pool.query(
-        `INSERT INTO chamados (id, setor, responsavel, categoria, urgencia, descricao, status, resultado, parecer_tecnico, ajudantes_json, comentarios_json, data_abertura, data_resolucao)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           status = VALUES(status),
-           resultado = VALUES(resultado),
-           parecer_tecnico = VALUES(parecer_tecnico),
-           ajudantes_json = VALUES(ajudantes_json),
-           comentarios_json = VALUES(comentarios_json),
-           data_resolucao = VALUES(data_resolucao)`,
-        [
-          c.id, c.setor, c.responsavel, c.categoria, c.urgencia || 'Normal',
-          c.descricao || '', c.status || 'aberto', c.resultado || null,
-          c.parecerTecnico || '', JSON.stringify(c.ajudantes || []),
-          JSON.stringify(c.comentarios || []), c.dataAbertura, c.dataResolucao || null
-        ]
-      );
-    }
-
-    res.json({ ok: true, msg: 'Dados sincronizados com sucesso no MySQL!' });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+  if (database && database !== dbConfig.database) {
+    dbConfig.database = database;
+    await inicializarBancoMySQL(database);
   }
-});
 
-// Atualizar Foto e Perfil do TI
-app.put('/api/config/ti-perfil', async (req, res) => {
-  try {
-    const { nome, cargo, ramal, foto } = req.body;
-    await pool.query(
-      `UPDATE configuracoes_ti SET nome_tecnico = ?, cargo_tecnico = ?, ramal_tecnico = ?, foto_ti = ? WHERE id = 1`,
-      [nome || 'Lucas Silva', cargo || 'Analista de Suporte TI', ramal || '2044', foto || null]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+  if (mysqlAtivo && pool) {
+    try {
+      if (perfilTI) {
+        await pool.query(
+          `UPDATE configuracoes_ti SET nome_tecnico = ?, cargo_tecnico = ?, foto_ti = ? WHERE id = 1`,
+          [perfilTI.nome || 'João Victor', perfilTI.cargo || 'Analista de Suporte TI', perfilTI.foto || null]
+        );
+      }
+      for (const col of colaboradores) {
+        await pool.query(
+          `INSERT INTO colaboradores (id, nome, funcao)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE nome = VALUES(nome), funcao = VALUES(funcao)`,
+          [col.id, col.nome, col.funcao || 'Colaborador TI']
+        );
+      }
+      for (const c of chamados) {
+        await pool.query(
+          `INSERT INTO chamados (id, setor, responsavel, categoria, descricao, status, resultado, parecer_tecnico, ajudantes_json, comentarios_json, data_abertura, data_resolucao)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             status = VALUES(status),
+             resultado = VALUES(resultado),
+             parecer_tecnico = VALUES(parecer_tecnico),
+             ajudantes_json = VALUES(ajudantes_json),
+             comentarios_json = VALUES(comentarios_json),
+             data_resolucao = VALUES(data_resolucao)`,
+          [
+            c.id, c.setor, c.responsavel, c.categoria,
+            c.descricao || '', c.status || 'aberto', c.resultado || null,
+            c.parecerTecnico || '', JSON.stringify(c.ajudantes || []),
+            JSON.stringify(c.comentarios || []), c.dataAbertura, c.dataResolucao || null
+          ]
+        );
+      }
+      return res.json({ ok: true, msg: `Dados sincronizados na DB MySQL (${dbConfig.database}) e em database/db_chamados.json!` });
+    } catch (err) {}
   }
-});
 
-// Descobrir IPs da máquina para exibir no terminal
+  res.json({ ok: true, msg: 'Dados sincronizados em database/db_chamados.json com sucesso!' });
+});[cite: 2]
+
 function obterIPsRedeLocal() {
   const interfaces = os.networkInterfaces();
   const ips = [];
@@ -272,17 +242,17 @@ function obterIPsRedeLocal() {
     }
   }
   return ips;
-}
+}[cite: 2]
 
 app.listen(PORT, HOST, async () => {
   await inicializarBancoMySQL();
   const ips = obterIPsRedeLocal();
   console.log('====================================================================');
-  console.log('🚀 SERVIDOR HELPDESK TI + MYSQL INICIADO COM SUCESSO!');
+  console.log('🚀 SERVIDOR HELPDESK TI (GITHUB + DB LOCAL) INICIADO!');
+  console.log('❤️  Feito pelo Victor da Recepção e o João Victor da TI (2026+)');
   console.log(`💻 Acesso Local (Esta Máquina): http://localhost:${PORT}`);
   ips.forEach(ip => {
-    console.log(`🌐 Acesso na Rede da Empresa:   http://${ip}:${PORT}`);
+    console.log(`🌐 Acesso na Rede:              http://${ip}:${PORT}`);
   });
   console.log('====================================================================');
-});
-```[cite: 2]
+});[cite: 2]
